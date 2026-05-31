@@ -1,2 +1,2 @@
 # poagitMusic
-A music player that's visually appealing.
+Music for poags and humans alike.
