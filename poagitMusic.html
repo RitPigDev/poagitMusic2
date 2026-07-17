@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>poagitMusic 2.5.0</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' blob: data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob: data: https:; connect-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'">
+  <meta http-equiv="X-Content-Type-Options" content="nosniff">
+  <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
+  <title>poagitMusic 2.5.1</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=SF+Pro+Display:wght@300;400;500;600&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
@@ -732,10 +735,10 @@
     /* Add-to-playlist context menu */
     #pl-ctx-menu {
       display: none; position: fixed; z-index: 9000;
-      background: rgba(25,5,14,0.95);
-      border: 1px solid rgba(255,255,255,0.2);
+      background: var(--glass-bg2);
+      border: 1px solid var(--glass-border);
       border-radius: 10px; padding: 5px 0;
-      box-shadow: 0 12px 40px rgba(0,0,0,0.55);
+      box-shadow: 0 12px 40px var(--glass-shadow);
       min-width: 170px;
       backdrop-filter: blur(20px);
     }
@@ -749,13 +752,14 @@
       padding: 5px 12px; font-size: 12px; color: var(--tx2);
       cursor: pointer; transition: background .1s;
     }
-    .ctx-item:hover { background: rgba(255,255,255,0.1); color: var(--tx); }
+    .ctx-item:hover { background: var(--row-hover); color: var(--tx); }
     .ctx-item svg { width: 11px; height: 11px; flex-shrink: 0; color: var(--tx3); }
-    .ctx-divider { height: 1px; background: rgba(255,255,255,0.1); margin: 4px 0; }
-    .ctx-item-danger { color: rgba(255,120,120,0.75); }
-    .ctx-item-danger svg { color: rgba(255,120,120,0.6); }
-    .ctx-item-danger:hover { background: rgba(255,75,75,0.15); color: rgba(255,140,140,1); }
-    .ctx-item-danger:hover svg { color: rgba(255,140,140,1); }
+    .ctx-divider { height: 1px; background: var(--glass-border2); margin: 4px 0; }
+    .ctx-item-danger { color: rgba(255,75,75,0.85); }
+    .ctx-item-danger svg { color: rgba(255,75,75,0.7); }
+    .ctx-item-danger:hover { background: rgba(255,75,75,0.15); color: rgba(224,20,20,1); }
+    .ctx-item-danger:hover svg { color: rgba(224,20,20,1); }
+
 
     #btn-pl.active { color: var(--acc2); border-color: rgba(255,107,138,0.4); background: rgba(255,107,138,0.12); }
 
@@ -1173,7 +1177,7 @@
             </div>
           </div>
           <div class="sm-divider"></div>
-          <div class="sm-version">poagitMusic 2.5.0</div>
+          <div class="sm-version">poagitMusic 2.5.1</div>
         </div>
       </div>
     </div>
@@ -1430,7 +1434,7 @@
     <div class="s-dot" id="s-dot"></div>
     <span id="s-text">Ready</span>
     <div id="sb-spacer"></div>
-    <span id="s-right">poagitMusic 2.5.0</span>
+    <span id="s-right">poagitMusic 2.5.1</span>
   </div>
 </div>
 
@@ -1546,7 +1550,10 @@ let eqPanelOpen = false;
 function initAudioContext() {
   if (audioCtx) return;
   try {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // latencyHint 'playback' trades a bit of latency for a larger, more
+    // stable audio buffer — this makes the graph far more resistant to
+    // glitching/underruns when the system is under CPU load (e.g. gaming).
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'playback' });
     eqNodes = EQ_BANDS.map((freq, i) => {
       const f = audioCtx.createBiquadFilter();
       f.type = i === 0 ? 'lowshelf' : i === EQ_BANDS.length - 1 ? 'highshelf' : 'peaking';
@@ -1555,15 +1562,12 @@ function initAudioContext() {
       f.gain.value = eqEnabled ? eqGains[i] : 0;
       return f;
     });
-    // Create analyser and insert before destination: source → EQ chain → analyser → destination
-    analyserNode = audioCtx.createAnalyser();
-    analyserNode.fftSize = 512;
-    analyserNode.smoothingTimeConstant = 0.75;
+    // (No analyser node: it was wired in but never actually read anywhere,
+    // so it was just extra graph work on every audio callback for zero
+    // benefit — removed.)
     for (let i = 0; i < eqNodes.length - 1; i++) eqNodes[i].connect(eqNodes[i + 1]);
-    eqNodes[eqNodes.length - 1].connect(analyserNode);
-    analyserNode.connect(audioCtx.destination);
     sourceNode = audioCtx.createMediaElementSource(audio);
-    sourceNode.connect(eqNodes[0]);
+    rewireEQGraph(); // connects source → filters → dest, or source → dest if EQ is off
     if (audioCtx.state === 'suspended') audioCtx.resume();
   } catch(e) { console.warn('[poagitMusic] AudioContext init failed:', e); }
 }
@@ -1574,12 +1578,43 @@ function ensureAudioCtx() {
 }
 
 function applyEQGains() {
-  eqNodes.forEach((n, i) => { n.gain.value = eqEnabled ? eqGains[i] : 0; });
+  eqNodes.forEach((n, i) => { n.gain.value = eqGains[i]; });
+}
+
+// A flat (all ~0dB) EQ is audibly identical to no filtering at all, so
+// there's no reason to pay for 10 live biquad filters in that case either.
+const EQ_FLAT_EPSILON = 0.05;
+function isEQFlat() {
+  return eqGains.every(g => Math.abs(g) < EQ_FLAT_EPSILON);
+}
+
+let eqGraphBypassed = null; // tri-state cache so we only reconnect on real transitions
+
+function rewireEQGraph() {
+  if (!audioCtx || !sourceNode || !eqNodes.length) return;
+  const shouldBypass = !eqEnabled || isEQFlat();
+  if (shouldBypass === eqGraphBypassed) return; // no change — don't touch the live graph
+  eqGraphBypassed = shouldBypass;
+  try { sourceNode.disconnect(); } catch(e) {}
+  try { eqNodes[eqNodes.length - 1].disconnect(); } catch(e) {}
+  if (shouldBypass) {
+    // Fully bypass the filter chain — a biquad filter costs the same CPU
+    // whether its gain is 0dB or not, so zeroing gains alone doesn't save
+    // anything. Actually removing the nodes from the graph does. This also
+    // kicks in automatically whenever every band happens to sit at 0dB,
+    // not just when the EQ toggle is off.
+    sourceNode.connect(audioCtx.destination);
+  } else {
+    // source → 10-band filter chain → destination
+    sourceNode.connect(eqNodes[0]);
+    eqNodes[eqNodes.length - 1].connect(audioCtx.destination);
+  }
 }
 
 function setEQEnabled(val) {
   eqEnabled = val;
   applyEQGains();
+  rewireEQGraph();
   saveEQPrefs();
   document.querySelectorAll('.eq-ring-db').forEach(el => { el.style.opacity = val ? '1' : '0.38'; });
   document.querySelectorAll('.eq-ring-wrap').forEach(el => { el.style.opacity = val ? '1' : '0.45'; el.style.pointerEvents = val ? '' : 'none'; });
@@ -1587,7 +1622,8 @@ function setEQEnabled(val) {
 
 function setEQBand(idx, db) {
   eqGains[idx] = db;
-  if (eqNodes[idx]) eqNodes[idx].gain.value = eqEnabled ? db : 0;
+  if (eqNodes[idx]) eqNodes[idx].gain.value = db;
+  rewireEQGraph();
   saveEQPrefs();
 }
 
@@ -1597,12 +1633,14 @@ function setRing(ringIdx, db) {
   const def = RING_DEFS[ringIdx];
   def.indices.forEach(i => {
     eqGains[i] = db;
-    if (eqNodes[i]) eqNodes[i].gain.value = eqEnabled ? db : 0;
+    if (eqNodes[i]) eqNodes[i].gain.value = db;
   });
+  rewireEQGraph();
   updateRingUI(ringIdx, db);
   document.getElementById('eq-preset-select').value = '';
   saveEQPrefs();
 }
+
 
 function updateRingUI(ringIdx, db) {
   const dbEl = document.getElementById('eq-ring-db-' + ringIdx);
@@ -1656,7 +1694,7 @@ function applyPreset(name) {
   if (!name || !EQ_PRESETS[name]) return;
   EQ_PRESETS[name].forEach((db, i) => {
     eqGains[i] = db;
-    if (eqNodes[i]) eqNodes[i].gain.value = eqEnabled ? db : 0;
+    if (eqNodes[i]) eqNodes[i].gain.value = db;
   });
   // Derive ring values as averages of their band groups
   RING_DEFS.forEach((def, ri) => {
@@ -1665,6 +1703,7 @@ function applyPreset(name) {
     ringGains[ri] = rounded;
     updateRingUI(ri, rounded);
   });
+  rewireEQGraph();
   saveEQPrefs();
 }
 
@@ -2350,7 +2389,19 @@ function savePlaylists() {
 }
 
 function loadPlaylists() {
-  try { playlists = JSON.parse(localStorage.getItem(PL_KEY) || '[]'); } catch(e) { playlists = []; }
+  try {
+    const raw = JSON.parse(localStorage.getItem(PL_KEY) || '[]');
+    playlists = Array.isArray(raw) ? raw.filter(pl =>
+      pl && typeof pl === 'object' &&
+      typeof pl.id === 'string' &&
+      typeof pl.name === 'string' &&
+      Array.isArray(pl.trackIds)
+    ).map(pl => ({
+      id: pl.id,
+      name: pl.name.replace(/[\u0000-\u001F\u007F]/g, '').slice(0, 120),
+      trackIds: pl.trackIds.filter(id => typeof id === 'string')
+    })) : [];
+  } catch(e) { playlists = []; }
 }
 
 function togglePlaylistPanel() {
@@ -2372,7 +2423,9 @@ function closePLModal() {
 }
 
 function confirmNewPlaylist() {
-  const name = document.getElementById('pl-modal-input').value.trim();
+  let name = document.getElementById('pl-modal-input').value.trim();
+  if (!name) return;
+  name = name.replace(/[\u0000-\u001F\u007F]/g, '').slice(0, 120);
   if (!name) return;
   const pl = { id: 'pl_' + Date.now(), name, trackIds: [] };
   playlists.push(pl);
