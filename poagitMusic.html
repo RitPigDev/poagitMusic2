@@ -6,7 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' blob: data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob: data: https:; connect-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'">
   <meta http-equiv="X-Content-Type-Options" content="nosniff">
   <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
-  <title>poagitMusic 2.5.1</title>
+  <title>poagitMusic 2.5.2</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=SF+Pro+Display:wght@300;400;500;600&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
@@ -1177,7 +1177,7 @@
             </div>
           </div>
           <div class="sm-divider"></div>
-          <div class="sm-version">poagitMusic 2.5.1</div>
+          <div class="sm-version">poagitMusic 2.5.2</div>
         </div>
       </div>
     </div>
@@ -1434,7 +1434,7 @@
     <div class="s-dot" id="s-dot"></div>
     <span id="s-text">Ready</span>
     <div id="sb-spacer"></div>
-    <span id="s-right">poagitMusic 2.5.1</span>
+    <span id="s-right">poagitMusic 2.5.2</span>
   </div>
 </div>
 
@@ -1787,7 +1787,7 @@ let tracks  = [], filtered = [];
 let curIdx  = -1, isPlaying = false, isShuffle = false;
 let repeatMode = 0, isMuted = false, volume = 0.8;
 let seekDrag = false, sortKey = 'name', sortAsc = true;
-let history = [], highlighted = -1;
+let playHistory = [], highlighted = -1;
 
 // Load EQ prefs before doing anything
 loadEQPrefs();
@@ -1998,8 +1998,8 @@ function loadTrack(idx) {
   document.getElementById('art-title').textContent = t.name;
   document.getElementById('art-ext').textContent   = t.ext;
 
-  history.push(idx);
-  if (history.length > 200) history.shift();
+  playHistory.push(idx);
+  if (playHistory.length > 200) playHistory.shift();
   renderTracks();
   updateDocTitle();
   saveResumeState();
@@ -2049,8 +2049,8 @@ function prevTrack() {
   if (!filtered.length) return;
   if (audio.currentTime > 3) { audio.currentTime = 0; return; }
   let prev;
-  if (isShuffle && history.length > 1) {
-    history.pop(); prev = history[history.length-1] ?? 0; history.pop();
+  if (isShuffle && playHistory.length > 1) {
+    playHistory.pop(); prev = playHistory[playHistory.length-1] ?? 0; playHistory.pop();
   } else { prev = (curIdx - 1 + filtered.length) % filtered.length; }
   loadTrack(prev); if (isPlaying) startPlay();
 }
@@ -2628,7 +2628,14 @@ document.getElementById('tracks-container').addEventListener('contextmenu', e =>
     applySort();
     renderTracks();
     setStatus('green', `${tracks.length} song${tracks.length!==1?'s':''} in library`);
-    loadTrack(0);
+
+    // Restore last-played track & position, if any; otherwise just load the first track
+    const resumeIdx = resumeTrackId ? filtered.findIndex(t => t.id === resumeTrackId) : -1;
+    loadTrack(resumeIdx >= 0 ? resumeIdx : 0);
+    if (resumeIdx >= 0 && resumePos > 0) {
+      const restorePos = () => { audio.currentTime = resumePos; audio.removeEventListener('loadedmetadata', restorePos); };
+      audio.addEventListener('loadedmetadata', restorePos);
+    }
 
   } catch(e) {
     console.warn('[poagitMusic] boot error:', e);
@@ -2637,6 +2644,9 @@ document.getElementById('tracks-container').addEventListener('contextmenu', e =>
     renderTracks();
     setStatus('', 'Could not load library');
   }
+
+  // Restore last-viewed panel (music / radio / sync)
+  if (lastView && lastView !== 'music') showView(lastView);
 })();
 
 // ── VIEW SWITCHING ────────────────────────────────────────────────────────────
